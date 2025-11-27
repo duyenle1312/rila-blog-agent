@@ -11,6 +11,42 @@ interface JobTimeline {
   timeline: TimelineEvent[];
 }
 
+const waitForServer = async (timeout = 30000, interval = 2000) => {
+  const startTime = Date.now();
+
+  const ping = async () => {
+    try {
+      const response = await fetch(import.meta.env.VITE_BACKEND_URL);
+      if (!response.ok) throw new Error("Server not ready");
+      const data = await response.json();
+      return data;
+    } catch {
+      if (Date.now() - startTime > timeout) {
+        throw new Error("Server did not respond in time");
+      }
+      // wait for 'interval' ms then try again
+      await new Promise((res) => setTimeout(res, interval));
+      return ping();
+    }
+  };
+
+  return ping();
+};
+
+const checkServerStatus = async () => {
+  try {
+    const response = await fetch(import.meta.env.VITE_BACKEND_URL);
+    if (!response.ok) throw new Error("Server not ready");
+    const data = await response.json();
+    return { online: true, data };
+  } catch  {
+    return { online: false };
+  }
+};
+
+
+
+
 export default function HomePage() {
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -34,20 +70,24 @@ export default function HomePage() {
     return new Date(bLast).getTime() - new Date(aLast).getTime();
   });
 
-  
-  // const [history, setHistory] = useState<JobTimeline[]>(() => {
-  //   const keys = Object.keys(localStorage).filter((key) =>
-  //     key.startsWith("timeline-")
-  //   );
-  //   return keys
-  //     .slice()
-  //     .reverse()
-  //     .map((key) => ({
-  //       jobId: key.replace("timeline-", ""),
-  //       timeline: JSON.parse(localStorage.getItem(key) || "[]"),
-  //     }));
-  // });
   const wsRef = useRef<WebSocket | null>(null);
+
+  const [serverStatus, setServerStatus] = useState({ online: false });
+  const [serverMessage, setServerMessage] = useState("")
+
+  useEffect(() => {
+    const checkServer = async () => {
+      const status = await checkServerStatus();
+      setServerStatus({ online: status.online });
+      setServerMessage(status.data?.message || "");
+    };
+
+    checkServer();
+
+    // Optional: keep pinging every 10 seconds to detect if server wakes up
+    const interval = setInterval(checkServer, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Save timeline to localStorage whenever it updates
   useEffect(() => {
@@ -66,6 +106,9 @@ export default function HomePage() {
 
     const formData = new FormData();
     formData.append("file", file);
+    
+    // Wait until backend is awake
+    await waitForServer(import.meta.env.VITE_BACKEND_URL);
 
     const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/upload`, {
       method: "POST",
@@ -82,7 +125,9 @@ export default function HomePage() {
     setTimeline([]);
 
     // Open WebSocket immediately
-    const socket = new WebSocket(`${import.meta.env.VITE_WS_BACKEND_URL}${data.ws_path}`);
+    const socket = new WebSocket(
+      `${import.meta.env.VITE_WS_BACKEND_URL}${data.ws_path}`
+    );
     wsRef.current = socket;
 
     socket.onopen = () => {
@@ -137,17 +182,26 @@ export default function HomePage() {
       {wsConnected && (
         <div className="bg-yellow-100 border-l-4 border-yellow-400 text-yellow-700 p-3 rounded mb-4">
           <p className="text-sm">
-            ⚠️ AI Agent working in progress. Do not reload or close the page, or you may lose updates.
+            ⚠️ AI Agent working in progress. Do not reload or close the page, or
+            you may lose updates.
           </p>
         </div>
       )}
 
+      <div>
+        {serverStatus.online ? (
+          <p className="text-lg font-semibold text-green-600 mb-8">✅ Server is online: {serverMessage}</p>
+        ) : (
+          <p className="text-lg font-semibold text-red-500 mb-8">🚫 Server is sleeping or offline. Please wait...</p>
+        )}
+      </div>
+
       <div className="w-full max-w-2xl space-y-6">
         {activeTab === "home" && (
           <>
-            <h1 className="text-center text-lg my-3 font-extrabold text-gray-800 tracking-tight">
+            {/* <h1 className="text-center text-lg my-3 font-extrabold text-gray-800 tracking-tight">
               RILA AI Agent
-            </h1>
+            </h1> */}
 
             {/* Upload Section */}
             <div className="bg-white border rounded-2xl p-6 space-y-4 shadow-sm">
